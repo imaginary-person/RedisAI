@@ -6,6 +6,9 @@
 #include "model.h"
 
 #include "tensorflow/c/c_api.h"
+#include "tensorflow/c/eager/c_api.h"
+
+#define RAI_TF_FN_NAME "rai_tf_forward"
 
 int RAI_InitBackendTF(int (*get_api_fn)(const char *, void *)) {
     get_api_fn("RedisModule_Alloc", ((void **)&RedisModule_Alloc));
@@ -223,19 +226,15 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
         RAI_SetError(error, RAI_EMODELIMPORT, "ERR unsupported device");
     }
 
-    TF_Graph *model = TF_NewGraph();
+    TF_Graph *graph = TF_NewGraph();
+    TF_ImportGraphDefOptions *options = TF_NewImportGraphDefOptions();
     TF_Status *status = TF_NewStatus();
     TF_Buffer *tfbuffer = TF_NewBuffer();
-    TF_ImportGraphDefOptions *options = TF_NewImportGraphDefOptions();
-    TF_Status *optionsStatus = NULL;
-    TF_SessionOptions *sessionOptions = NULL;
-    TF_Status *sessionStatus = NULL;
-    TF_Session *session = NULL;
 
     tfbuffer->length = modellen;
     tfbuffer->data = modeldef;
 
-    TF_GraphImportGraphDef(model, tfbuffer, options, status);
+    TF_GraphImportGraphDef(graph, tfbuffer, options, status);
 
     if (TF_GetCode(status) != TF_OK) {
         char *errorMessage = RedisModule_Strdup(TF_Message(status));
@@ -245,26 +244,26 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     }
 
     for (size_t i = 0; i < ninputs; ++i) {
-        TF_Operation *oper = TF_GraphOperationByName(model, inputs[i]);
+        TF_Operation *oper = TF_GraphOperationByName(graph, inputs[i]);
         if (oper == NULL || strcmp(TF_OperationOpType(oper), "Placeholder") != 0) {
             size_t len = strlen(inputs[i]);
             char *msg = RedisModule_Calloc(60 + len, sizeof(*msg));
             sprintf(msg, "ERR Input node named \"%s\" not found in TF graph.", inputs[i]);
             RAI_SetError(error, RAI_EMODELIMPORT, msg);
             RedisModule_Free(msg);
-            goto cleanup;
+            return NULL;
         }
     }
 
     for (size_t i = 0; i < noutputs; ++i) {
-        TF_Operation *oper = TF_GraphOperationByName(model, outputs[i]);
+        TF_Operation *oper = TF_GraphOperationByName(graph, outputs[i]);
         if (oper == NULL) {
             size_t len = strlen(outputs[i]);
             char *msg = RedisModule_Calloc(60 + len, sizeof(*msg));
             sprintf(msg, "ERR Output node named \"%s\" not found in TF graph", outputs[i]);
             RAI_SetError(error, RAI_EMODELIMPORT, msg);
             RedisModule_Free(msg);
-            goto cleanup;
+            return NULL;
         }
     }
 
@@ -274,6 +273,65 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     tfbuffer = NULL;
     TF_DeleteStatus(status);
     status = NULL;
+
+    TF_Output tf_inputs[ninputs];
+    TF_Output tf_outputs[noutputs];
+
+    for (size_t i = 0; i < ninputs; ++i) {
+        TF_Output port;
+        port.oper = TF_GraphOperationByName(graph, inputs[i]);
+        port.index = 0;
+        if (port.oper == NULL) {
+            return NULL;
+        }
+        tf_inputs[i] = port;
+    }
+
+    for (size_t i = 0; i < noutputs; ++i) {
+        TF_Output port;
+        port.oper = TF_GraphOperationByName(graph, outputs[i]);
+        port.index = 0;
+        if (port.oper == NULL) {
+            return NULL;
+        }
+        tf_outputs[i] = port;
+    }
+
+    TF_Function *function = TF_GraphToFunction(
+        graph,                  // fn_body
+        RAI_TF_FN_NAME, 0,    // fn_name, append_hash_to_fn_name,
+        -1, NULL,               // num_opers, opers
+        ninputs, tf_inputs,     // ninputs, inputs,
+        noutputs, tf_outputs,   // noutputs, outputs
+        outputs,                // output_names,
+        NULL,                   // opts
+        "",                     // description
+        status                  // status
+        );
+    // TODO EAGER
+    // check status and return error
+ 
+    TFE_ContextOptions *context_opts = TFE_NewContextOptions();
+    // TFE_ContextOptionsSetConfig(context_opts, proto, proto_len, status);
+    // TFE_ContextOptionsSetAsync(context_opts, 0);
+    TFE_ContextOptionsSetDevicePlacementPolicy(context_opts, TFE_DEVICE_PLACEMENT_EXPLICIT);
+
+    TFE_Context *context = TFE_NewContext(context_opts, status);
+    // TODO EAGER
+    // check status and return error
+ 
+    TFE_ContextAddFunction(context, function, status);
+    // TODO EAGER
+    // check status and return error
+ 
+    TFE_DeleteContextOptions(context_opts);
+    TFE_DeleteContext(context);
+
+#if 0
+    TF_Status *optionsStatus = NULL;
+    TF_SessionOptions *sessionOptions = NULL;
+    TF_Status *sessionStatus = NULL;
+    TF_Session *session = NULL;
 
     optionsStatus = TF_NewStatus();
     sessionOptions = TF_NewSessionOptions();
@@ -340,7 +398,7 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     optionsStatus = NULL;
 
     sessionStatus = TF_NewStatus();
-    session = TF_NewSession(model, sessionOptions, sessionStatus);
+    session = TF_NewSession(graph, sessionOptions, sessionStatus);
 
     TF_Status *deviceListStatus = TF_NewStatus();
     TF_DeviceList *deviceList = TF_SessionListDevices(session, deviceListStatus);
@@ -370,6 +428,7 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
 
     TF_DeleteSessionOptions(sessionOptions);
     TF_DeleteStatus(sessionStatus);
+#endif
 
     char **inputs_ = array_new(char *, ninputs);
     for (long long i = 0; i < ninputs; i++) {
@@ -385,8 +444,8 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     memcpy(buffer, modeldef, modellen);
 
     RAI_Model *ret = RedisModule_Calloc(1, sizeof(*ret));
-    ret->model = model;
-    ret->session = session;
+    ret->model = graph;
+    ret->session = context;
     ret->backend = backend;
     ret->devicestr = RedisModule_Strdup(devicestr);
     ret->ninputs = ninputs;
@@ -401,22 +460,23 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     return ret;
 
 cleanup:
-    TF_DeleteGraph(model);
+    TF_DeleteGraph(graph);
     if (options)
         TF_DeleteImportGraphDefOptions(options);
     if (tfbuffer)
         TF_DeleteBuffer(tfbuffer);
     if (status)
         TF_DeleteStatus(status);
-    if (sessionOptions)
-        TF_DeleteSessionOptions(sessionOptions);
-    if (sessionStatus)
-        TF_DeleteStatus(sessionStatus);
+    // if (sessionOptions)
+    //     TF_DeleteSessionOptions(sessionOptions);
+    // if (sessionStatus)
+    //     TF_DeleteStatus(sessionStatus);
     return NULL;
 }
 
 void RAI_ModelFreeTF(RAI_Model *model, RAI_Error *error) {
     TF_Status *status = TF_NewStatus();
+#if 0
     TF_CloseSession(model->session, status);
 
     if (TF_GetCode(status) != TF_OK) {
@@ -425,12 +485,14 @@ void RAI_ModelFreeTF(RAI_Model *model, RAI_Error *error) {
     }
 
     TF_DeleteSession(model->session, status);
+#endif
+    TFE_DeleteContext(model->session);
     model->session = NULL;
 
-    if (TF_GetCode(status) != TF_OK) {
-        RAI_SetError(error, RAI_EMODELFREE, RedisModule_Strdup(TF_Message(status)));
-        return;
-    }
+    // if (TF_GetCode(status) != TF_OK) {
+    //     RAI_SetError(error, RAI_EMODELFREE, RedisModule_Strdup(TF_Message(status)));
+    //     return;
+    // }
 
     TF_DeleteGraph(model->model);
     model->model = NULL;
@@ -457,7 +519,9 @@ void RAI_ModelFreeTF(RAI_Model *model, RAI_Error *error) {
         RedisModule_Free(model->data);
     }
 
+#if 0
     TF_DeleteStatus(status);
+#endif
 }
 
 int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
@@ -472,9 +536,9 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
     const size_t ninputs = array_len(mctxs[0]->inputs);
     const size_t noutputs = array_len(mctxs[0]->outputs);
     TF_Tensor *inputTensorsValues[ninputs];
-    TF_Output inputs[ninputs];
     TF_Tensor *outputTensorsValues[noutputs];
-    TF_Output outputs[noutputs];
+    TFE_TensorHandle *inputTensorsHandles[ninputs];
+    TFE_TensorHandle *outputTensorsHandles[noutputs];
 
     size_t batch_sizes[nbatches];
     size_t batch_offsets[nbatches];
@@ -497,30 +561,28 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
             batched_input_tensors[b] = mctxs[b]->inputs[i].tensor;
         }
         inputTensorsValues[i] = RAI_TFTensorFromTensors(batched_input_tensors, nbatches);
-        TF_Output port;
-        port.oper = TF_GraphOperationByName(mctxs[0]->model->model, mctxs[0]->inputs[i].name);
-        port.index = 0;
-        if (port.oper == NULL) {
-            return 1;
-        }
-        inputs[i] = port;
+        inputTensorsHandles[i] = TFE_NewTensorHandle(inputTensorsValues[i], status);
+        // TODO EAGER
+        // check status and return error
     }
 
-    for (size_t i = 0; i < noutputs; ++i) {
-        TF_Output port;
-        port.oper = TF_GraphOperationByName(mctxs[0]->model->model, mctxs[0]->outputs[i].name);
-        port.index = 0;
-        if (port.oper == NULL) {
-            return 1;
-        }
-        outputs[i] = port;
-    }
+    TFE_Op *fn_op = TFE_NewOp(mctxs[0]->model->session, RAI_TF_FN_NAME, status);
+    // TODO EAGER
+    // check status and return error
 
-    TF_SessionRun(mctxs[0]->model->session, NULL /* run_options */, inputs, inputTensorsValues,
-                  ninputs, outputs, outputTensorsValues, noutputs, NULL /* target_opers */,
-                  0 /* ntargets */, NULL /* run_Metadata */, status);
+    TFE_OpAddInputList(fn_op, inputTensorsHandles, ninputs, status);
+    // TODO EAGER
+    // check status and return error
+
+    // TODO EAGER: send tensors to device (as long as we keep device allocation EXPLICIT)
+
+    int noutputs_ = noutputs;
+    TFE_Execute(fn_op, outputTensorsHandles, &noutputs_, status);
+    // TODO EAGER
+    // check status and return error
 
     for (size_t i = 0; i < ninputs; ++i) {
+        TFE_DeleteTensorHandle(inputTensorsHandles[i]);
         TF_DeleteTensor(inputTensorsValues[i]);
     }
 
@@ -533,12 +595,24 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
     }
 
     for (size_t i = 0; i < noutputs; ++i) {
+        outputTensorsValues[i] = TFE_TensorHandleResolve(outputTensorsHandles[i], status);
+
+        if (TF_GetCode(status) != TF_OK) {
+            char *errorMessage = RedisModule_Strdup(TF_Message(status));
+            RAI_SetError(error, RAI_EMODELRUN, errorMessage);
+            TF_DeleteStatus(status);
+            RedisModule_Free(errorMessage);
+            return 1;
+        }
+    }
+
+    for (size_t i = 0; i < noutputs; ++i) {
         if (nbatches > 1) {
             if (TF_NumDims(outputTensorsValues[i]) == 0) {
                 continue;
             }
             if (TF_Dim(outputTensorsValues[i], 0) != total_batch_size) {
-                TF_DeleteTensor(outputTensorsValues[i]);
+                // TF_DeleteTensor(outputTensorsValues[i]);
                 TF_DeleteStatus(status);
                 RAI_SetError(error, RAI_EMODELRUN,
                              "ERR Model did not generate the expected batch size");
@@ -553,7 +627,8 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
             mctxs[0]->outputs[i].tensor =
                 RAI_TensorCreateFromTFTensor(outputTensorsValues[i], 0, -1);
         }
-        TF_DeleteTensor(outputTensorsValues[i]);
+        // TF_DeleteTensor(outputTensorsValues[i]);
+        TFE_DeleteTensorHandle(outputTensorsHandles[i]);
     }
 
     TF_DeleteStatus(status);
