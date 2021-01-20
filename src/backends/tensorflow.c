@@ -297,20 +297,20 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
         tf_outputs[i] = port;
     }
 
-    TF_Function *function = TF_GraphToFunction(
-        graph,                  // fn_body
-        RAI_TF_FN_NAME, 0,    // fn_name, append_hash_to_fn_name,
-        -1, NULL,               // num_opers, opers
-        ninputs, tf_inputs,     // ninputs, inputs,
-        noutputs, tf_outputs,   // noutputs, outputs
-        outputs,                // output_names,
-        NULL,                   // opts
-        "",                     // description
-        status                  // status
+    TF_Function *function =
+        TF_GraphToFunction(graph,                // fn_body
+                           RAI_TF_FN_NAME, 0,    // fn_name, append_hash_to_fn_name,
+                           -1, NULL,             // num_opers, opers
+                           ninputs, tf_inputs,   // ninputs, inputs,
+                           noutputs, tf_outputs, // noutputs, outputs
+                           outputs,              // output_names,
+                           opts,                 // opts
+                           "",                   // description
+                           status                // status
         );
     // TODO EAGER
     // check status and return error
- 
+
     TFE_ContextOptions *context_opts = TFE_NewContextOptions();
     // TFE_ContextOptionsSetConfig(context_opts, proto, proto_len, status);
     // TFE_ContextOptionsSetAsync(context_opts, 0);
@@ -319,11 +319,11 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     TFE_Context *context = TFE_NewContext(context_opts, status);
     // TODO EAGER
     // check status and return error
- 
+
     TFE_ContextAddFunction(context, function, status);
     // TODO EAGER
     // check status and return error
- 
+
     TFE_DeleteContextOptions(context_opts);
     TFE_DeleteContext(context);
 
