@@ -304,7 +304,7 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
                            ninputs, tf_inputs,   // ninputs, inputs,
                            noutputs, tf_outputs, // noutputs, outputs
                            outputs,              // output_names,
-                           opts,                 // opts
+                           NULL,                 // opts
                            "",                   // description
                            status                // status
         );
