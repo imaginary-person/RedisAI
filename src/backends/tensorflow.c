@@ -271,8 +271,6 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     options = NULL;
     TF_DeleteBuffer(tfbuffer);
     tfbuffer = NULL;
-    TF_DeleteStatus(status);
-    status = NULL;
 
     TF_Output tf_inputs[ninputs];
     TF_Output tf_outputs[noutputs];
@@ -305,37 +303,37 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
                            noutputs, tf_outputs, // noutputs, outputs
                            outputs,              // output_names,
                            NULL,                 // opts
-                           "",                   // description
+                           NULL,                 // description
                            status                // status
         );
-    // TODO EAGER
-    // check status and return error
+
+    if (TF_GetCode(status) != TF_OK) {
+        RAI_SetError(error, RAI_EMODELCONFIGURE, RedisModule_Strdup(TF_Message(status)));
+        goto cleanup;
+    }
 
     TFE_ContextOptions *context_opts = TFE_NewContextOptions();
     // TFE_ContextOptionsSetConfig(context_opts, proto, proto_len, status);
     // TFE_ContextOptionsSetAsync(context_opts, 0);
-    TFE_ContextOptionsSetDevicePlacementPolicy(context_opts, TFE_DEVICE_PLACEMENT_EXPLICIT);
+    // TFE_ContextOptionsSetDevicePlacementPolicy(context_opts, TFE_DEVICE_PLACEMENT_EXPLICIT);
 
     TFE_Context *context = TFE_NewContext(context_opts, status);
-    // TODO EAGER
-    // check status and return error
+    if (TF_GetCode(status) != TF_OK) {
+        RAI_SetError(error, RAI_EMODELCONFIGURE, RedisModule_Strdup(TF_Message(status)));
+        goto cleanup;
+    }
 
     TFE_ContextAddFunction(context, function, status);
-    // TODO EAGER
-    // check status and return error
+    if (TF_GetCode(status) != TF_OK) {
+        RAI_SetError(error, RAI_EMODELCONFIGURE, RedisModule_Strdup(TF_Message(status)));
+        goto cleanup;
+    }
 
     TFE_DeleteContextOptions(context_opts);
-    TFE_DeleteContext(context);
+
+    TF_DeleteStatus(status);
 
 #if 0
-    TF_Status *optionsStatus = NULL;
-    TF_SessionOptions *sessionOptions = NULL;
-    TF_Status *sessionStatus = NULL;
-    TF_Session *session = NULL;
-
-    optionsStatus = TF_NewStatus();
-    sessionOptions = TF_NewSessionOptions();
-
     // For setting config options in session from the C API see:
     // https://github.com/tensorflow/tensorflow/issues/13853
     // import tensorflow as tf
@@ -390,16 +388,6 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
         }
     }
 
-    if (TF_GetCode(optionsStatus) != TF_OK) {
-        RAI_SetError(error, RAI_EMODELCONFIGURE, RedisModule_Strdup(TF_Message(optionsStatus)));
-        goto cleanup;
-    }
-    TF_DeleteStatus(optionsStatus);
-    optionsStatus = NULL;
-
-    sessionStatus = TF_NewStatus();
-    session = TF_NewSession(graph, sessionOptions, sessionStatus);
-
     TF_Status *deviceListStatus = TF_NewStatus();
     TF_DeviceList *deviceList = TF_SessionListDevices(session, deviceListStatus);
     const int num_devices = TF_DeviceListCount(deviceList);
@@ -425,9 +413,6 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
         RAI_SetError(error, RAI_EMODELCREATE, RedisModule_Strdup(TF_Message(status)));
         goto cleanup;
     }
-
-    TF_DeleteSessionOptions(sessionOptions);
-    TF_DeleteStatus(sessionStatus);
 #endif
 
     char **inputs_ = array_new(char *, ninputs);
@@ -467,32 +452,12 @@ cleanup:
         TF_DeleteBuffer(tfbuffer);
     if (status)
         TF_DeleteStatus(status);
-    // if (sessionOptions)
-    //     TF_DeleteSessionOptions(sessionOptions);
-    // if (sessionStatus)
-    //     TF_DeleteStatus(sessionStatus);
     return NULL;
 }
 
 void RAI_ModelFreeTF(RAI_Model *model, RAI_Error *error) {
-    TF_Status *status = TF_NewStatus();
-#if 0
-    TF_CloseSession(model->session, status);
-
-    if (TF_GetCode(status) != TF_OK) {
-        RAI_SetError(error, RAI_EMODELFREE, RedisModule_Strdup(TF_Message(status)));
-        return;
-    }
-
-    TF_DeleteSession(model->session, status);
-#endif
     TFE_DeleteContext(model->session);
     model->session = NULL;
-
-    // if (TF_GetCode(status) != TF_OK) {
-    //     RAI_SetError(error, RAI_EMODELFREE, RedisModule_Strdup(TF_Message(status)));
-    //     return;
-    // }
 
     TF_DeleteGraph(model->model);
     model->model = NULL;
@@ -518,10 +483,6 @@ void RAI_ModelFreeTF(RAI_Model *model, RAI_Error *error) {
     if (model->data) {
         RedisModule_Free(model->data);
     }
-
-#if 0
-    TF_DeleteStatus(status);
-#endif
 }
 
 int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
@@ -562,24 +523,44 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
         }
         inputTensorsValues[i] = RAI_TFTensorFromTensors(batched_input_tensors, nbatches);
         inputTensorsHandles[i] = TFE_NewTensorHandle(inputTensorsValues[i], status);
-        // TODO EAGER
-        // check status and return error
+        if (TF_GetCode(status) != TF_OK) {
+            char *errorMessage = RedisModule_Strdup(TF_Message(status));
+            RAI_SetError(error, RAI_EMODELRUN, errorMessage);
+            TF_DeleteStatus(status);
+            RedisModule_Free(errorMessage);
+            return 1;
+        }
     }
 
     TFE_Op *fn_op = TFE_NewOp(mctxs[0]->model->session, RAI_TF_FN_NAME, status);
-    // TODO EAGER
-    // check status and return error
+    if (TF_GetCode(status) != TF_OK) {
+        char *errorMessage = RedisModule_Strdup(TF_Message(status));
+        RAI_SetError(error, RAI_EMODELRUN, errorMessage);
+        TF_DeleteStatus(status);
+        RedisModule_Free(errorMessage);
+        return 1;
+    }
 
     TFE_OpAddInputList(fn_op, inputTensorsHandles, ninputs, status);
-    // TODO EAGER
-    // check status and return error
+    if (TF_GetCode(status) != TF_OK) {
+        char *errorMessage = RedisModule_Strdup(TF_Message(status));
+        RAI_SetError(error, RAI_EMODELRUN, errorMessage);
+        TF_DeleteStatus(status);
+        RedisModule_Free(errorMessage);
+        return 1;
+    }
 
     // TODO EAGER: send tensors to device (as long as we keep device allocation EXPLICIT)
 
     int noutputs_ = noutputs;
     TFE_Execute(fn_op, outputTensorsHandles, &noutputs_, status);
-    // TODO EAGER
-    // check status and return error
+    if (TF_GetCode(status) != TF_OK) {
+        char *errorMessage = RedisModule_Strdup(TF_Message(status));
+        RAI_SetError(error, RAI_EMODELRUN, errorMessage);
+        TF_DeleteStatus(status);
+        RedisModule_Free(errorMessage);
+        return 1;
+    }
 
     for (size_t i = 0; i < ninputs; ++i) {
         TFE_DeleteTensorHandle(inputTensorsHandles[i]);
