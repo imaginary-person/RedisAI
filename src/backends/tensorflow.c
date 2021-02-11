@@ -315,7 +315,7 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     TFE_ContextOptions *context_opts = TFE_NewContextOptions();
     // TFE_ContextOptionsSetConfig(context_opts, proto, proto_len, status);
     // TFE_ContextOptionsSetAsync(context_opts, 0);
-    // TFE_ContextOptionsSetDevicePlacementPolicy(context_opts, TFE_DEVICE_PLACEMENT_EXPLICIT);
+    TFE_ContextOptionsSetDevicePlacementPolicy(context_opts, TFE_DEVICE_PLACEMENT_EXPLICIT);
 
     TFE_Context *context = TFE_NewContext(context_opts, status);
     if (TF_GetCode(status) != TF_OK) {
@@ -530,6 +530,11 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
             RedisModule_Free(errorMessage);
             return 1;
         }
+        // TODO EAGER
+        inputTensorsHandles[i] = TFE_TensorHandleCopyToDevice(inputTensorsHandles[i],
+                                                              mctxs[0]->model->session,
+                                                              mctxs[0]->model->devicestr,
+                                                              status);
     }
 
     TFE_Op *fn_op = TFE_NewOp(mctxs[0]->model->session, RAI_TF_FN_NAME, status);
@@ -576,6 +581,11 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
     }
 
     for (size_t i = 0; i < noutputs; ++i) {
+        outputTensorsHandles[i] = TFE_TensorHandleCopyToDevice(outputTensorsHandles[i],
+                                                               mctxs[0]->model->session,
+                                                               "CPU",
+                                                               status);
+
         outputTensorsValues[i] = TFE_TensorHandleResolve(outputTensorsHandles[i], status);
 
         if (TF_GetCode(status) != TF_OK) {
