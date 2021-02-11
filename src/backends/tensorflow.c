@@ -313,6 +313,9 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
     }
 
     TFE_ContextOptions *context_opts = TFE_NewContextOptions();
+    uint8_t config[4] = {0x32, 0x02, 0x20, 0x01};
+    TFE_ContextOptionsSetConfig(context_opts, (void *)config, 4, status);
+
     // TFE_ContextOptionsSetConfig(context_opts, proto, proto_len, status);
     // TFE_ContextOptionsSetAsync(context_opts, 0);
     TFE_ContextOptionsSetDevicePlacementPolicy(context_opts, TFE_DEVICE_PLACEMENT_EXPLICIT);
@@ -414,7 +417,6 @@ RAI_Model *RAI_ModelCreateTF(RAI_Backend backend, const char *devicestr, RAI_Mod
         goto cleanup;
     }
 #endif
-
     char **inputs_ = array_new(char *, ninputs);
     for (long long i = 0; i < ninputs; i++) {
         inputs_ = array_append(inputs_, RedisModule_Strdup(inputs[i]));
