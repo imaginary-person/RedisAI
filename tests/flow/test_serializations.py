@@ -81,7 +81,7 @@ class test_v0_rdb_load:
         self.env.assertEqual([backend, device, tag, batchsize, minbatchsize, inputs, outputs], [b"TORCH", b"CPU", b"PT_MINIMAL_V0", 0, 0, [b'a', b'b'], [b'']])  
         torch_model_run(self.env, key_name)
 
-    def test_v0_troch_script(self):
+    def test_v0_torch_script(self):
         key_name = "torch_script{1}"
         con = self.env.getConnection()
         script_rdb = b'\x07\x81\x00\x8f\xd2\t\x12\x0fL\x00\x05\x04CPU\x00\x05\x10TORCH_SCRIPT_V0\x00\x05\xc3@W@i\x0fdef bar(a, b):\n  \x00\x0ereturn a + b\n\nd\x80 \x08_variadic@)\x12args : List[Tensor]\xe0\x06;  \x02[0] A`\t\x031]\n\x00\x00\t\x00\x0b\xee\x04\xe7\x11\xaez\x91'

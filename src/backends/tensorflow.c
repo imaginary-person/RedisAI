@@ -515,6 +515,18 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
         }
     }
 
+    char tf_devicestr[256];
+    int devicestr_len = strlen(mctxs[0]->model->devicestr);
+    if (strncasecmp(mctxs[0]->model->devicestr, "CPU", 3) == 0) {
+        sprintf(tf_devicestr, "/device:CPU:0");
+    }
+    else if (devicestr_len == 3) {
+        sprintf(tf_devicestr, "/device:%s:0", mctxs[0]->model->devicestr);
+    }
+    else {
+        sprintf(tf_devicestr, "/device:%s", mctxs[0]->model->devicestr);
+    }
+
     for (size_t i = 0; i < ninputs; ++i) {
         RAI_Tensor *batched_input_tensors[nbatches];
 
@@ -530,11 +542,19 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
             RedisModule_Free(errorMessage);
             return 1;
         }
-        // TODO EAGER
+
         inputTensorsHandles[i] = TFE_TensorHandleCopyToDevice(inputTensorsHandles[i],
                                                               mctxs[0]->model->session,
-                                                              mctxs[0]->model->devicestr,
+                                                              tf_devicestr,
                                                               status);
+
+        if (TF_GetCode(status) != TF_OK) {
+            char *errorMessage = RedisModule_Strdup(TF_Message(status));
+            RAI_SetError(error, RAI_EMODELRUN, errorMessage);
+            TF_DeleteStatus(status);
+            RedisModule_Free(errorMessage);
+            return 1;
+        }
     }
 
     TFE_Op *fn_op = TFE_NewOp(mctxs[0]->model->session, RAI_TF_FN_NAME, status);
@@ -554,8 +574,6 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
         RedisModule_Free(errorMessage);
         return 1;
     }
-
-    // TODO EAGER: send tensors to device (as long as we keep device allocation EXPLICIT)
 
     int noutputs_ = noutputs;
     TFE_Execute(fn_op, outputTensorsHandles, &noutputs_, status);
@@ -583,7 +601,7 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
     for (size_t i = 0; i < noutputs; ++i) {
         outputTensorsHandles[i] = TFE_TensorHandleCopyToDevice(outputTensorsHandles[i],
                                                                mctxs[0]->model->session,
-                                                               "CPU",
+                                                               "/device:CPU:0",
                                                                status);
 
         outputTensorsValues[i] = TFE_TensorHandleResolve(outputTensorsHandles[i], status);
