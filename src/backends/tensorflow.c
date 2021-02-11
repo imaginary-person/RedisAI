@@ -521,11 +521,9 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
     int devicestr_len = strlen(mctxs[0]->model->devicestr);
     if (strncasecmp(mctxs[0]->model->devicestr, "CPU", 3) == 0) {
         sprintf(tf_devicestr, "/device:CPU:0");
-    }
-    else if (devicestr_len == 3) {
+    } else if (devicestr_len == 3) {
         sprintf(tf_devicestr, "/device:%s:0", mctxs[0]->model->devicestr);
-    }
-    else {
+    } else {
         sprintf(tf_devicestr, "/device:%s", mctxs[0]->model->devicestr);
     }
 
@@ -545,10 +543,8 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
             return 1;
         }
 
-        inputTensorsHandles[i] = TFE_TensorHandleCopyToDevice(inputTensorsHandles[i],
-                                                              mctxs[0]->model->session,
-                                                              tf_devicestr,
-                                                              status);
+        inputTensorsHandles[i] = TFE_TensorHandleCopyToDevice(
+            inputTensorsHandles[i], mctxs[0]->model->session, tf_devicestr, status);
 
         if (TF_GetCode(status) != TF_OK) {
             char *errorMessage = RedisModule_Strdup(TF_Message(status));
@@ -601,10 +597,8 @@ int RAI_ModelRunTF(RAI_ModelRunCtx **mctxs, RAI_Error *error) {
     }
 
     for (size_t i = 0; i < noutputs; ++i) {
-        outputTensorsHandles[i] = TFE_TensorHandleCopyToDevice(outputTensorsHandles[i],
-                                                               mctxs[0]->model->session,
-                                                               "/device:CPU:0",
-                                                               status);
+        outputTensorsHandles[i] = TFE_TensorHandleCopyToDevice(
+            outputTensorsHandles[i], mctxs[0]->model->session, "/device:CPU:0", status);
 
         outputTensorsValues[i] = TFE_TensorHandleResolve(outputTensorsHandles[i], status);
 
